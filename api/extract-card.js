@@ -1,4 +1,4 @@
-const axios = require('axios');
+import axios from 'axios';
 
 // Intelligent business card parser
 function parseBusinessCardIntelligently(lines, fullText) {
@@ -171,8 +171,8 @@ export default async function handler(req, res) {
 
     const apiKey = process.env.GOOGLE_CLOUD_API_KEY;
     if (!apiKey) {
-      console.error('Missing GOOGLE_CLOUD_API_KEY');
-      return res.status(500).json({ error: 'Vision API key not configured' });
+      console.error('Missing GOOGLE_CLOUD_API_KEY environment variable');
+      return res.status(500).json({ error: 'API key not configured' });
     }
 
     let base64Image = imageData;
@@ -182,6 +182,8 @@ export default async function handler(req, res) {
 
     const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
 
+    console.log('Calling Vision API...');
+    
     const visionResponse = await axios.post(visionApiUrl, {
       requests: [
         {
@@ -210,6 +212,8 @@ export default async function handler(req, res) {
     const fullText = textAnnotations[0].description;
     const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
+    console.log('Parsing card with', lines.length, 'lines');
+    
     const cardInfo = parseBusinessCardIntelligently(lines, fullText);
 
     return res.status(200).json({
@@ -219,7 +223,8 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Error processing image:', error.message);
+    console.error('Error in /api/extract-card:', error.message);
+    console.error('Error details:', error);
     return res.status(500).json({ 
       error: 'Failed to extract card information',
       details: error.message 
