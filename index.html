@@ -3,10 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Business Card Scanner - Google Drive & Contacts</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.10/html5-qrcode.min.js"></script>
+    <title>Business Card Scanner - Google Vision API</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -395,7 +393,7 @@
     <div class="container">
         <div class="header">
             <h1>📇 Business Card Scanner</h1>
-            <p>Google Drive + Google Contacts</p>
+            <p>Google Cloud Vision + Google Contacts</p>
         </div>
 
         <div class="content">
@@ -446,11 +444,11 @@
                     Extract Information
                 </div>
                 <button class="btn-primary" onclick="extractText()" id="extractBtn">
-                    Extract with OCR
+                    Extract with AI
                 </button>
                 <div id="loadingIndicator" class="loading" style="display:none;">
                     <div class="spinner"></div>
-                    <span>Processing image...</span>
+                    <span>Processing card with Google Vision API...</span>
                 </div>
             </div>
 
@@ -522,7 +520,7 @@
                 </div>
             </div>
 
-            <!-- Quick Setup Guide -->
+            <!-- How It Works -->
             <div class="section">
                 <div class="section-title">
                     ℹ️ How It Works
@@ -530,11 +528,11 @@
                 <p style="font-size: 13px; color: #666; line-height: 1.6;">
                     <strong>1. Sign in</strong> with your Google account<br>
                     <strong>2. Take or upload</strong> a business card photo<br>
-                    <strong>3. AI reads</strong> the text automatically<br>
+                    <strong>3. Google Cloud Vision</strong> reads the text with high accuracy<br>
                     <strong>4. Review & save</strong> to Contacts & Drive<br><br>
-                    ✅ Everything stays in your Google account<br>
-                    ✅ No organization approvals needed<br>
-                    ✅ Fully automated with OCR
+                    ✅ Better accuracy with Google Vision API<br>
+                    ✅ Intelligent text understanding<br>
+                    ✅ Everything stays in your Google account
                 </p>
             </div>
         </div>
@@ -544,38 +542,29 @@
         let currentImage = null;
         let cameraStream = null;
         let isAuthenticated = false;
-        let accessToken = null;
         let googleUser = null;
 
         const CLIENT_ID = '882388449959-pdo5jeqi75iac88ko7aba2p4rq0ud06c.apps.googleusercontent.com';
-        const SCOPES = [
-            'https://www.googleapis.com/auth/drive.file',
-            'https://www.googleapis.com/auth/contacts'
-        ];
+        const BACKEND_URL = window.location.origin;
 
         // Initialize Google Sign-In
         function initGoogleSignIn() {
-            if (!CLIENT_ID.includes('PLACEHOLDER')) {
-                google.accounts.id.initialize({
-                    client_id: CLIENT_ID,
-                    callback: handleCredentialResponse
-                });
+            google.accounts.id.initialize({
+                client_id: CLIENT_ID,
+                callback: handleCredentialResponse
+            });
 
-                google.accounts.id.renderButton(
-                    document.getElementById('signInDiv'),
-                    {
-                        theme: 'outline',
-                        size: 'large',
-                        text: 'signin_with'
-                    }
-                );
-            } else {
-                showMessage('⚠️ Configure CLIENT_ID first (see setup guide)', 'error');
-            }
+            google.accounts.id.renderButton(
+                document.getElementById('signInDiv'),
+                {
+                    theme: 'outline',
+                    size: 'large',
+                    text: 'signin_with'
+                }
+            );
         }
 
         function handleCredentialResponse(response) {
-            // Decode the JWT token (contains user info)
             const base64Url = response.credential.split('.')[1];
             const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
             const jsonPayload = decodeURIComponent(
@@ -585,7 +574,6 @@
             );
             
             googleUser = JSON.parse(jsonPayload);
-            accessToken = response.credential;
             isAuthenticated = true;
             updateAuthStatus();
             showMessage('✅ Signed in as ' + googleUser.name, 'success');
@@ -644,57 +632,38 @@
             const loading = document.getElementById('loadingIndicator');
             loading.style.display = 'flex';
 
-            Tesseract.recognize(currentImage, 'eng')
-                .then(({ data: { text } }) => {
-                    parseBusinessCardText(text);
+            // Send to backend for Vision API processing
+            axios.post(`${BACKEND_URL}/api/extract-card`, {
+                imageData: currentImage
+            })
+            .then(response => {
+                if (response.data.success) {
+                    const cardData = response.data.data;
+                    
+                    // Populate form with extracted data
+                    document.getElementById('fullName').value = cardData.fullName || '';
+                    document.getElementById('jobTitle').value = cardData.jobTitle || '';
+                    document.getElementById('company').value = cardData.company || '';
+                    document.getElementById('email').value = cardData.email || '';
+                    document.getElementById('phone').value = cardData.phone || '';
+                    document.getElementById('website').value = cardData.website || '';
+                    document.getElementById('address').value = cardData.address || '';
+                    document.getElementById('notes').value = cardData.notes || '';
+
                     document.getElementById('formSection').style.display = 'block';
-                    loading.style.display = 'none';
-                })
-                .catch(err => {
-                    showMessage('OCR failed: ' + err.message, 'error');
-                    loading.style.display = 'none';
-                });
+                    showMessage('✅ Card information extracted successfully!', 'success');
+                } else {
+                    showMessage('Failed to extract: ' + response.data.error, 'error');
+                }
+                loading.style.display = 'none';
+            })
+            .catch(error => {
+                showMessage('Error: ' + (error.response?.data?.error || error.message), 'error');
+                loading.style.display = 'none';
+            });
         }
 
-        function parseBusinessCardText(text) {
-            const lines = text.split('\n').filter(l => l.trim());
-            
-            let name = '';
-            let company = '';
-            let email = '';
-            let phone = '';
-            let title = '';
-            let website = '';
-
-            lines.forEach(line => {
-                if (email === '' && line.includes('@')) {
-                    email = line.trim();
-                }
-                if (phone === '' && /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(line)) {
-                    phone = line.trim();
-                }
-                if (website === '' && line.includes('http')) {
-                    website = line.trim();
-                }
-            });
-
-            if (lines.length > 0) name = lines[0].trim();
-            if (lines.length > 1) title = lines[1].trim();
-            lines.forEach(line => {
-                if (company === '' && line.length > 3 && !line.includes('@')) {
-                    company = line.trim();
-                }
-            });
-
-            document.getElementById('fullName').value = name;
-            document.getElementById('jobTitle').value = title;
-            document.getElementById('company').value = company;
-            document.getElementById('email').value = email;
-            document.getElementById('phone').value = phone;
-            document.getElementById('website').value = website;
-        }
-
-        async function saveContact() {
+        function saveContact() {
             if (!isAuthenticated) {
                 showMessage('Please sign in first', 'error');
                 return;
@@ -722,33 +691,12 @@
                         [{ value: document.getElementById('website').value, type: 'homepage' }] : []
                 };
 
-                // Save to Google Contacts (if checked)
-                if (document.getElementById('addToContacts').checked) {
-                    // Note: This requires full OAuth setup - simplified for now
-                    showMessage('✅ Contact data prepared (Contact sync requires full OAuth setup)', 'success');
-                }
-
-                // Save image to Google Drive (if checked)
-                if (document.getElementById('saveToDrive').checked && currentImage) {
-                    showMessage('✅ Card saved! (Image upload requires full OAuth setup)', 'success');
-                }
-
-                // For now, create downloadable JSON
-                const exportData = {
-                    name: fullName,
-                    jobTitle: document.getElementById('jobTitle').value,
-                    company: company,
-                    email: document.getElementById('email').value,
-                    phone: document.getElementById('phone').value,
-                    website: document.getElementById('website').value,
-                    address: document.getElementById('address').value,
-                    notes: document.getElementById('notes').value,
-                    savedAt: new Date().toISOString()
-                };
-
-                // Save to localStorage for now
+                // Save locally for now
                 let contacts = JSON.parse(localStorage.getItem('scannedContacts') || '[]');
-                contacts.push(exportData);
+                contacts.push({
+                    ...contactData,
+                    savedAt: new Date().toISOString()
+                });
                 localStorage.setItem('scannedContacts', JSON.stringify(contacts));
 
                 showMessage('✅ Contact saved! (' + contacts.length + ' total)', 'success');
@@ -780,6 +728,11 @@
             msgEl.classList.add('show');
             setTimeout(() => msgEl.classList.remove('show'), 4000);
         }
+
+        // Load axios from CDN
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js';
+        document.head.appendChild(script);
 
         // Initialize on page load
         window.addEventListener('load', initGoogleSignIn);
