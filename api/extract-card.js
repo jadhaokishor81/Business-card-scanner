@@ -1,5 +1,3 @@
-import axios from 'axios';
-
 // Intelligent business card parser
 function parseBusinessCardIntelligently(lines, fullText) {
   const card = {
@@ -13,13 +11,11 @@ function parseBusinessCardIntelligently(lines, fullText) {
     notes: ''
   };
 
-  // Regex patterns
   const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
   const phoneRegex = /(?:\+\d{1,3}[-.\s]?)?\(?[\d]{3}\)?[-.\s]?[\d]{3}[-.\s]?[\d]{4}|(?:\+\d{1,3}[-.\s]?)?[\d]{7,15}|\+\d{1,3}\s?\d{1,14}/g;
   const urlRegex = /https?:\/\/[^\s]+|www\.[^\s]+/g;
   const addressKeywords = /street|avenue|road|blvd|suite|floor|building|apt|box|p\.o\.|po box|city|state|zip|postal|country/i;
 
-  // Extract structured data using regex
   const emailMatches = fullText.match(emailRegex);
   if (emailMatches) card.email = emailMatches[0];
 
@@ -33,11 +29,8 @@ function parseBusinessCardIntelligently(lines, fullText) {
   }
 
   const urlMatches = fullText.match(urlRegex);
-  if (urlMatches) {
-    card.website = urlMatches[0];
-  }
+  if (urlMatches) card.website = urlMatches[0];
 
-  // Job title keywords
   const titleKeywords = [
     'director', 'manager', 'engineer', 'specialist', 'executive', 'president',
     'ceo', 'cto', 'cfo', 'consultant', 'developer', 'designer', 'analyst',
@@ -47,7 +40,6 @@ function parseBusinessCardIntelligently(lines, fullText) {
     'sales', 'marketing', 'operations', 'finance'
   ];
 
-  // Company keywords
   const companyKeywords = [
     'inc', 'ltd', 'corp', 'llc', 'pvt', 'gmbh', 'ag', 'co.', 'company',
     'group', 'solutions', 'services', 'systems', 'technologies', 'enterprises',
@@ -55,7 +47,6 @@ function parseBusinessCardIntelligently(lines, fullText) {
     'corporation', 'industries'
   ];
 
-  // Analyze each line
   let nameFound = false;
   let titleFound = false;
   let companyFound = false;
@@ -69,11 +60,9 @@ function parseBusinessCardIntelligently(lines, fullText) {
     if (charCount < 2) continue;
     if (line.includes('@') || lowerLine.match(/^\+?\d/)) continue;
 
-    // NAME EXTRACTION
     if (!nameFound && i < 3 && charCount < 60 && charCount > 3) {
       let hasTitle = titleKeywords.some(kw => lowerLine.includes(kw));
       let hasCompany = companyKeywords.some(kw => lowerLine.includes(kw));
-      
       if (!hasTitle && !hasCompany) {
         card.fullName = line;
         nameFound = true;
@@ -81,27 +70,23 @@ function parseBusinessCardIntelligently(lines, fullText) {
       }
     }
 
-    // TITLE EXTRACTION
     if (!titleFound && titleKeywords.some(kw => lowerLine.includes(kw))) {
       card.jobTitle = line;
       titleFound = true;
       continue;
     }
 
-    // COMPANY EXTRACTION
     if (!companyFound && companyKeywords.some(kw => lowerLine.includes(kw))) {
       card.company = line;
       companyFound = true;
       continue;
     }
 
-    // ADDRESS EXTRACTION
     if (addressKeywords.test(line) || /^\d+/.test(line)) {
       addressLines.push(line);
       continue;
     }
 
-    // FALLBACK NAME
     if (!nameFound && i === 0 && charCount < 60 && charCount > 3) {
       if (!line.includes('@') && !lowerLine.match(/^\+?\d/) && 
           !titleKeywords.some(kw => lowerLine.includes(kw))) {
@@ -147,9 +132,7 @@ function parseBusinessCardIntelligently(lines, fullText) {
   return card;
 }
 
-// Vercel serverless function
 export default async function handler(req, res) {
-  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -163,6 +146,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    console.log('Received request');
     const { imageData } = req.body;
 
     if (!imageData) {
@@ -170,9 +154,10 @@ export default async function handler(req, res) {
     }
 
     const apiKey = process.env.GOOGLE_CLOUD_API_KEY;
+    console.log('API Key available:', !!apiKey);
+    
     if (!apiKey) {
-      console.error('Missing GOOGLE_CLOUD_API_KEY environment variable');
-      return res.status(500).json({ error: 'API key not configured' });
+      return res.status(500).json({ error: 'API key not configured', env: Object.keys(process.env) });
     }
 
     let base64Image = imageData;
@@ -180,26 +165,45 @@ export default async function handler(req, res) {
       base64Image = imageData.split(',')[1];
     }
 
+    console.log('Image size:', base64Image.length);
+
     const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
 
     console.log('Calling Vision API...');
     
-    const visionResponse = await axios.post(visionApiUrl, {
-      requests: [
-        {
-          image: {
-            content: base64Image
-          },
-          features: [
-            {
-              type: 'DOCUMENT_TEXT_DETECTION'
-            }
-          ]
-        }
-      ]
+    const visionResponse = await fetch(visionApiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            image: {
+              content: base64Image
+            },
+            features: [
+              {
+                type: 'DOCUMENT_TEXT_DETECTION'
+              }
+            ]
+          }
+        ]
+      })
     });
 
-    const responses = visionResponse.data.responses;
+    console.log('Vision API response status:', visionResponse.status);
+
+    if (!visionResponse.ok) {
+      const errorText = await visionResponse.text();
+      console.error('Vision API error:', errorText);
+      return res.status(500).json({ error: 'Vision API error', details: errorText });
+    }
+
+    const data = await visionResponse.json();
+    console.log('Vision API data received');
+
+    const responses = data.responses;
     if (!responses || responses.length === 0) {
       return res.status(400).json({ error: 'No text detected in image' });
     }
@@ -212,9 +216,11 @@ export default async function handler(req, res) {
     const fullText = textAnnotations[0].description;
     const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    console.log('Parsing card with', lines.length, 'lines');
+    console.log('Parsing card...');
     
     const cardInfo = parseBusinessCardIntelligently(lines, fullText);
+
+    console.log('Success!');
 
     return res.status(200).json({
       success: true,
@@ -223,11 +229,11 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Error in /api/extract-card:', error.message);
-    console.error('Error details:', error);
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
     return res.status(500).json({ 
-      error: 'Failed to extract card information',
-      details: error.message 
+      error: error.message,
+      stack: error.stack
     });
   }
 }
