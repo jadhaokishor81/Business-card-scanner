@@ -8,7 +8,7 @@ const app = express();
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb' }));
+app.use(express.urlencoding({ limit: '50mb' }));
 
 // CORS configuration
 const corsOptions = {
@@ -26,8 +26,8 @@ app.use(cors(corsOptions));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: 'Too many requests from this IP, please try again later.'
 });
 
@@ -47,27 +47,19 @@ app.post('/api/extract-card', async (req, res) => {
       return res.status(400).json({ error: 'No image data provided' });
     }
 
-    // Get credentials from environment
-    const credentials = process.env.GOOGLE_VISION_CREDENTIALS;
-    if (!credentials) {
-      return res.status(500).json({ error: 'Vision API credentials not configured' });
+    const apiKey = process.env.GOOGLE_CLOUD_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'Vision API key not configured' });
     }
 
-    const credentialsObj = JSON.parse(credentials);
-    const projectId = credentialsObj.project_id;
-
-    // Prepare image for Vision API (remove data:image/jpeg;base64, prefix if present)
+    // Prepare image for Vision API
     let base64Image = imageData;
     if (imageData.includes(',')) {
       base64Image = imageData.split(',')[1];
     }
 
     // Call Google Cloud Vision API
-    const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_CLOUD_API_KEY}`;
-
-    if (!process.env.GOOGLE_CLOUD_API_KEY) {
-      return res.status(500).json({ error: 'Google Cloud API key not configured' });
-    }
+    const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
 
     const visionResponse = await axios.post(visionApiUrl, {
       requests: [
@@ -96,10 +88,10 @@ app.post('/api/extract-card', async (req, res) => {
 
     // Extract full text
     const fullText = textAnnotations[0].description;
-    const lines = fullText.split('\n').filter(line => line.trim());
+    const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Parse the card intelligently
-    const cardInfo = parseBusinessCard(lines, fullText);
+    // Parse with intelligent logic
+    const cardInfo = parseBusinessCardIntelligently(lines, fullText);
 
     res.json({
       success: true,
@@ -116,8 +108,8 @@ app.post('/api/extract-card', async (req, res) => {
   }
 });
 
-// Intelligent parser for business card text
-function parseBusinessCard(lines, fullText) {
+// Intelligent business card parser
+function parseBusinessCardIntelligently(lines, fullText) {
   const card = {
     fullName: '',
     jobTitle: '',
@@ -129,128 +121,156 @@ function parseBusinessCard(lines, fullText) {
     notes: ''
   };
 
-  // Email regex
+  // Regex patterns
   const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-  // Phone regex (various formats)
-  const phoneRegex = /(?:\+\d{1,3}[-.\s]?)?\(?[\d]{3}\)?[-.\s]?[\d]{3}[-.\s]?[\d]{4}|(?:\+\d{1,3})?[\d]{7,15}/g;
-  // URL regex
+  const phoneRegex = /(?:\+\d{1,3}[-.\s]?)?\(?[\d]{3}\)?[-.\s]?[\d]{3}[-.\s]?[\d]{4}|(?:\+\d{1,3}[-.\s]?)?[\d]{7,15}|\+\d{1,3}\s?\d{1,14}/g;
   const urlRegex = /https?:\/\/[^\s]+|www\.[^\s]+/g;
+  const addressKeywords = /street|avenue|road|blvd|suite|floor|building|apt|box|p\.o\.|po box|city|state|zip|postal|country/i;
 
-  // Find emails
+  // Extract structured data using regex
   const emailMatches = fullText.match(emailRegex);
-  if (emailMatches) {
-    card.email = emailMatches[0]; // Take first email
-  }
+  if (emailMatches) card.email = emailMatches[0];
 
-  // Find phone numbers
   const phoneMatches = fullText.match(phoneRegex);
   if (phoneMatches) {
-    card.phone = phoneMatches[0]; // Take first phone
+    // Filter out numbers that are too long (likely not phone numbers)
+    const validPhones = phoneMatches.filter(p => {
+      const digits = p.replace(/\D/g, '');
+      return digits.length >= 7 && digits.length <= 15;
+    });
+    if (validPhones.length > 0) card.phone = validPhones[0];
   }
 
-  // Find URLs
   const urlMatches = fullText.match(urlRegex);
   if (urlMatches) {
-    card.website = urlMatches[0]; // Take first URL
+    card.website = urlMatches[0];
   }
 
-  // Parse lines to extract name, title, company
+  // Job title keywords (expanded list)
+  const titleKeywords = [
+    'director', 'manager', 'engineer', 'specialist', 'executive', 'president',
+    'ceo', 'cto', 'cfo', 'consultant', 'developer', 'designer', 'analyst',
+    'coordinator', 'officer', 'representative', 'lead', 'supervisor', 'head',
+    'chief', 'associate', 'coordinator', 'assistant', 'administrator',
+    'architect', 'producer', 'strategist', 'coordinator', 'partner', 'founder',
+    'vice', 'deputy', 'senior', 'principal', 'sales', 'marketing', 'operations'
+  ];
+
+  // Company keywords (expanded list)
+  const companyKeywords = [
+    'inc', 'ltd', 'corp', 'llc', 'pvt', 'gmbh', 'ag', 'co.', 'company',
+    'group', 'solutions', 'services', 'systems', 'technologies', 'enterprises',
+    'international', 'global', 'usa', 'uk', 'india', 'singapore', 'consultants',
+    'associates', 'partners', 'corporation', 'industries'
+  ];
+
+  // Analyze each line
+  let nameFound = false;
+  let titleFound = false;
+  let companyFound = false;
+  const addressLines = [];
+
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = lines[i];
     const lowerLine = line.toLowerCase();
+    const charCount = line.length;
 
-    // Skip empty lines and common words
-    if (line.length < 2) continue;
+    // Skip very short lines (likely noise)
+    if (charCount < 2) continue;
 
-    // First line is usually name (if it's not an email or typical title)
-    if (i === 0 && !line.includes('@') && line.length > 3 && line.length < 50) {
-      card.fullName = line;
+    // Skip lines that are just email or phone
+    if (line.includes('@') || lowerLine.match(/^\+?\d/)) continue;
+
+    // **NAME EXTRACTION** - Usually first 1-2 non-title, non-company lines
+    if (!nameFound && i < 3 && charCount < 60 && charCount > 3) {
+      let hasTitle = titleKeywords.some(kw => lowerLine.includes(kw));
+      let hasCompany = companyKeywords.some(kw => lowerLine.includes(kw));
+      
+      if (!hasTitle && !hasCompany) {
+        card.fullName = line;
+        nameFound = true;
+        continue;
+      }
+    }
+
+    // **TITLE EXTRACTION** - Lines with title keywords
+    if (!titleFound && titleKeywords.some(kw => lowerLine.includes(kw))) {
+      card.jobTitle = line;
+      titleFound = true;
       continue;
     }
 
-    // Look for job titles
-    if (lowerLine.includes('director') || 
-        lowerLine.includes('manager') || 
-        lowerLine.includes('engineer') ||
-        lowerLine.includes('specialist') ||
-        lowerLine.includes('executive') ||
-        lowerLine.includes('president') ||
-        lowerLine.includes('ceo') ||
-        lowerLine.includes('cto') ||
-        lowerLine.includes('consultant') ||
-        lowerLine.includes('developer') ||
-        lowerLine.includes('designer') ||
-        lowerLine.includes('analyst') ||
-        lowerLine.includes('coordinator') ||
-        lowerLine.includes('officer') ||
-        lowerLine.includes('representative') ||
-        lowerLine.includes('lead')) {
-      card.jobTitle = line;
-    }
-
-    // Look for company names
-    if (lowerLine.includes('inc') ||
-        lowerLine.includes('ltd') ||
-        lowerLine.includes('corp') ||
-        lowerLine.includes('llc') ||
-        lowerLine.includes('pvt') ||
-        lowerLine.includes('gmbh') ||
-        lowerLine.includes('ag') ||
-        lowerLine.includes('co.') ||
-        lowerLine.includes('company') ||
-        lowerLine.includes('group') ||
-        lowerLine.includes('solutions') ||
-        lowerLine.includes('services') ||
-        lowerLine.includes('systems')) {
+    // **COMPANY EXTRACTION** - Lines with company keywords
+    if (!companyFound && companyKeywords.some(kw => lowerLine.includes(kw))) {
       card.company = line;
+      companyFound = true;
+      continue;
     }
 
-    // Look for addresses (lines with numbers or common address words)
-    if ((lowerLine.includes('street') || 
-         lowerLine.includes('avenue') ||
-         lowerLine.includes('road') ||
-         lowerLine.includes('blvd') ||
-         lowerLine.includes('city') ||
-         lowerLine.includes('state') ||
-         lowerLine.includes('zip') ||
-         lowerLine.includes('suite') ||
-         lowerLine.includes('floor') ||
-         /^\d+/.test(line)) &&
-        !card.email.includes(line)) {
-      if (card.address) {
-        card.address += ', ' + line;
-      } else {
-        card.address = line;
+    // **ADDRESS EXTRACTION** - Lines with address keywords or numbers
+    if (addressKeywords.test(line) || /^\d+/.test(line)) {
+      addressLines.push(line);
+      continue;
+    }
+
+    // If we haven't found name yet by line 3, use first non-special line
+    if (!nameFound && i === 0 && charCount < 60 && charCount > 3) {
+      if (!line.includes('@') && !lowerLine.match(/^\+?\d/) && !titleKeywords.some(kw => lowerLine.includes(kw))) {
+        card.fullName = line;
+        nameFound = true;
       }
     }
   }
 
-  // If name not found, use first line
-  if (!card.fullName && lines.length > 0) {
-    card.fullName = lines[0].trim();
+  // Combine address lines
+  if (addressLines.length > 0) {
+    card.address = addressLines.join(', ').substring(0, 200);
   }
 
-  // Clean up the data
+  // **FALLBACK NAME EXTRACTION** - If name still not found
+  if (!card.fullName && lines.length > 0) {
+    // Use first line that's reasonable length and doesn't contain special keywords
+    for (let line of lines) {
+      if (line.length > 2 && line.length < 60 && !line.includes('@')) {
+        const lowerLine = line.toLowerCase();
+        const hasKeyword = titleKeywords.some(kw => lowerLine.includes(kw)) ||
+                          companyKeywords.some(kw => lowerLine.includes(kw));
+        if (!hasKeyword) {
+          card.fullName = line;
+          break;
+        }
+      }
+    }
+  }
+
+  // **FALLBACK COMPANY** - If company still not found, look for longest line that isn't name/title
+  if (!card.company && lines.length > 1) {
+    for (let line of lines) {
+      if (line !== card.fullName && line !== card.jobTitle && 
+          line.length > 10 && line.length < 80 && !line.includes('@')) {
+        card.company = line;
+        break;
+      }
+    }
+  }
+
+  // Clean up
   card.fullName = card.fullName.trim();
   card.jobTitle = card.jobTitle.trim();
   card.company = card.company.trim();
-  card.address = card.address.trim().substring(0, 200); // Limit address length
+  card.address = card.address.trim();
 
   return card;
 }
 
-// Save contact to Google Contacts (optional future enhancement)
+// Save contact
 app.post('/api/save-contact', async (req, res) => {
   try {
     const { contactData, accessToken } = req.body;
-
-    // This would integrate with Google Contacts API
-    // For now, just acknowledge the request
     res.json({
       success: true,
-      message: 'Contact data received. Integration with Google Contacts coming soon.'
+      message: 'Contact data received.'
     });
-
   } catch (error) {
     console.error('Error saving contact:', error.message);
     res.status(500).json({ error: 'Failed to save contact' });
