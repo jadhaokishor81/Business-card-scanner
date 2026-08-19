@@ -1,20 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
-    <!-- Web App Manifest -->
-<link rel="manifest" href="/manifest.json">
-
-<!-- iPhone Specific -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Card Scanner">
-<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect fill='%234285f4' width='180' height='180'/><text x='50%' y='50%' font-size='80' fill='white' text-anchor='middle' dy='.3em' font-weight='bold'>📇</text></svg>">
-
-<!-- Theme Color -->
-<meta name="theme-color" content="#4285f4"><head>
+<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Business Card Scanner - Google Vision API</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    <!-- iPhone Specific -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Card Scanner">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect fill='%234285f4' width='180' height='180'/><text x='50%' y='50%' font-size='80' fill='white' text-anchor='middle' dy='.3em' font-weight='bold'>📇</text></svg>">
+    <meta name="theme-color" content="#4285f4">
     <style>
         * {
             margin: 0;
@@ -403,7 +401,7 @@
     <div class="container">
         <div class="header">
             <h1>📇 Business Card Scanner</h1>
-            <p>Google Cloud Vision + Google Contacts</p>
+            <p>Google Cloud Vision + Google Contacts & Drive</p>
         </div>
 
         <div class="content">
@@ -417,7 +415,7 @@
                 </div>
 
                 <div class="info-box">
-                    ℹ️ First time? You'll need to authorize access to Google Drive and Contacts.
+                    ℹ️ First time? You'll authorize access to Google Drive and Contacts.
                 </div>
             </div>
 
@@ -512,11 +510,11 @@
                 <div class="checkbox-group">
                     <div class="checkbox-item">
                         <input type="checkbox" id="addToContacts" checked>
-                        <label for="addToContacts">Add to Google Contacts</label>
+                        <label for="addToContacts">Save to Google Contacts</label>
                     </div>
                     <div class="checkbox-item">
                         <input type="checkbox" id="saveToDrive" checked>
-                        <label for="saveToDrive">Save image to Drive</label>
+                        <label for="saveToDrive">Save image to Google Drive</label>
                     </div>
                 </div>
 
@@ -540,28 +538,38 @@
                     <strong>2. Take or upload</strong> a business card photo<br>
                     <strong>3. Google Cloud Vision</strong> reads the text with high accuracy<br>
                     <strong>4. Review & save</strong> to Contacts & Drive<br><br>
-                    ✅ Better accuracy with Google Vision API<br>
-                    ✅ Intelligent text understanding<br>
-                    ✅ Everything stays in your Google account
+                    ✅ Contacts automatically saved to Google Contacts<br>
+                    ✅ Images stored in "Business Card Scanner" folder in Drive<br>
+                    ✅ Everything stays in your Google account<br>
+                    ✅ Only $0.006 per card with Google Vision API
                 </p>
             </div>
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js"></script>
     <script>
         let currentImage = null;
         let cameraStream = null;
         let isAuthenticated = false;
         let googleUser = null;
+        let accessToken = null;
 
         const CLIENT_ID = '882388449959-pdo5jeqi75iac88ko7aba2p4rq0ud06c.apps.googleusercontent.com';
         const BACKEND_URL = window.location.origin;
+        const SCOPES = [
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/contacts',
+            'https://www.googleapis.com/auth/drive.file'
+        ];
 
-        // Initialize Google Sign-In
+        // Initialize Google Sign-In with OAuth
         function initGoogleSignIn() {
             google.accounts.id.initialize({
                 client_id: CLIENT_ID,
-                callback: handleCredentialResponse
+                callback: handleCredentialResponse,
+                ux_mode: 'popup'
             });
 
             google.accounts.id.renderButton(
@@ -572,6 +580,13 @@
                     text: 'signin_with'
                 }
             );
+
+            // Also initialize OAuth for access token
+            google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES.join(' '),
+                callback: handleTokenResponse,
+            });
         }
 
         function handleCredentialResponse(response) {
@@ -586,7 +601,26 @@
             googleUser = JSON.parse(jsonPayload);
             isAuthenticated = true;
             updateAuthStatus();
-            showMessage('✅ Signed in as ' + googleUser.name, 'success');
+            
+            // Request access token for Contacts and Drive
+            requestAccessToken();
+        }
+
+        function requestAccessToken() {
+            const tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES.join(' '),
+                callback: handleTokenResponse,
+            });
+            tokenClient.requestAccessToken({ prompt: 'consent' });
+        }
+
+        function handleTokenResponse(response) {
+            if (response.access_token) {
+                accessToken = response.access_token;
+                console.log('Access token obtained');
+                showMessage('✅ Connected to Google Drive & Contacts', 'success');
+            }
         }
 
         function updateAuthStatus() {
@@ -642,7 +676,6 @@
             const loading = document.getElementById('loadingIndicator');
             loading.style.display = 'flex';
 
-            // Send to backend for Vision API processing
             axios.post(`${BACKEND_URL}/api/extract-card`, {
                 imageData: currentImage
             })
@@ -650,7 +683,6 @@
                 if (response.data.success) {
                     const cardData = response.data.data;
                     
-                    // Populate form with extracted data
                     document.getElementById('fullName').value = cardData.fullName || '';
                     document.getElementById('jobTitle').value = cardData.jobTitle || '';
                     document.getElementById('company').value = cardData.company || '';
@@ -679,6 +711,11 @@
                 return;
             }
 
+            if (!accessToken) {
+                showMessage('Please authorize access to Google Contacts & Drive', 'error');
+                return;
+            }
+
             const fullName = document.getElementById('fullName').value;
             const company = document.getElementById('company').value;
 
@@ -687,34 +724,61 @@
                 return;
             }
 
-            try {
-                const contactData = {
-                    names: [{ displayName: fullName }],
-                    organizations: [{ name: company }],
-                    emailAddresses: document.getElementById('email').value ? 
-                        [{ value: document.getElementById('email').value, type: 'work' }] : [],
-                    phoneNumbers: document.getElementById('phone').value ? 
-                        [{ value: document.getElementById('phone').value, type: 'work' }] : [],
-                    biographies: document.getElementById('notes').value ? 
-                        [{ value: document.getElementById('notes').value }] : [],
-                    urls: document.getElementById('website').value ? 
-                        [{ value: document.getElementById('website').value, type: 'homepage' }] : []
-                };
+            const contactData = {
+                fullName: fullName,
+                jobTitle: document.getElementById('jobTitle').value,
+                company: company,
+                email: document.getElementById('email').value,
+                phone: document.getElementById('phone').value,
+                website: document.getElementById('website').value,
+                address: document.getElementById('address').value,
+                notes: document.getElementById('notes').value
+            };
 
-                // Save locally for now
-                let contacts = JSON.parse(localStorage.getItem('scannedContacts') || '[]');
-                contacts.push({
-                    ...contactData,
-                    savedAt: new Date().toISOString()
-                });
-                localStorage.setItem('scannedContacts', JSON.stringify(contacts));
+            const saveToContacts = document.getElementById('addToContacts').checked;
+            const saveToDrive = document.getElementById('saveToDrive').checked;
 
-                showMessage('✅ Contact saved! (' + contacts.length + ' total)', 'success');
-                resetForm();
+            const loadingEl = document.createElement('div');
+            loadingEl.className = 'loading';
+            loadingEl.innerHTML = '<div class="spinner"></div><span>Saving contact...</span>';
+            document.querySelector('.section:has(#formSection)').appendChild(loadingEl);
 
-            } catch (error) {
-                showMessage('Error: ' + error.message, 'error');
+            let promises = [];
+
+            // Save to Google Contacts
+            if (saveToContacts) {
+                promises.push(
+                    axios.post(`${BACKEND_URL}/api/save-contact`, {
+                        contactData: contactData,
+                        accessToken: accessToken
+                    })
+                );
             }
+
+            // Upload image to Google Drive
+            if (saveToDrive && currentImage) {
+                promises.push(
+                    axios.post(`${BACKEND_URL}/api/upload-image`, {
+                        imageData: currentImage,
+                        fileName: `${fullName}-${Date.now()}.jpg`,
+                        accessToken: accessToken,
+                        contactName: fullName
+                    })
+                );
+            }
+
+            Promise.all(promises)
+                .then(responses => {
+                    loadingEl.remove();
+                    showMessage('✅ Contact saved successfully!', 'success');
+                    console.log('Save results:', responses);
+                    resetForm();
+                })
+                .catch(error => {
+                    loadingEl.remove();
+                    showMessage('Error: ' + (error.response?.data?.error || error.message), 'error');
+                    console.error('Save error:', error);
+                });
         }
 
         function resetForm() {
@@ -738,11 +802,6 @@
             msgEl.classList.add('show');
             setTimeout(() => msgEl.classList.remove('show'), 4000);
         }
-
-        // Load axios from CDN
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js';
-        document.head.appendChild(script);
 
         // Initialize on page load
         window.addEventListener('load', initGoogleSignIn);
