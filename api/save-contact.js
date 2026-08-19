@@ -20,18 +20,47 @@ export default async function handler(req, res) {
 
     console.log('Saving contact:', contactData.fullName);
 
-    // Google Contacts API endpoint
-    const contactsApiUrl = 'https://people.googleapis.com/v1/people:createContact';
+    // Parse name into given and family names
+    const nameParts = contactData.fullName ? contactData.fullName.trim().split(/\s+/) : [];
+    const givenName = nameParts.length > 0 ? nameParts[0] : '';
+    const familyName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-    // Format contact data for Google Contacts API
+    // Build contact object with correct Google People API schema
     const personData = {
-      names: contactData.fullName ? [{ displayName: contactData.fullName }] : [],
-      organizations: contactData.company ? [{ name: contactData.company, title: contactData.jobTitle }] : [],
-      emailAddresses: contactData.email ? [{ value: contactData.email, type: 'work' }] : [],
-      phoneNumbers: contactData.phone ? [{ value: contactData.phone, type: 'work' }] : [],
-      urls: contactData.website ? [{ value: contactData.website, type: 'homepage' }] : [],
-      addresses: contactData.address ? [{ formattedValue: contactData.address, type: 'work' }] : [],
-      biographies: contactData.notes ? [{ value: contactData.notes }] : [],
+      names: contactData.fullName ? [{ 
+        givenName: givenName,
+        familyName: familyName,
+        displayName: contactData.fullName
+      }] : [],
+      
+      emails: contactData.email ? [{ 
+        value: contactData.email, 
+        type: 'work' 
+      }] : [],
+      
+      phoneNumbers: contactData.phone ? [{ 
+        value: contactData.phone, 
+        type: 'work' 
+      }] : [],
+      
+      organizations: contactData.company || contactData.jobTitle ? [{ 
+        name: contactData.company || '',
+        title: contactData.jobTitle || ''
+      }] : [],
+      
+      addresses: contactData.address ? [{ 
+        formattedValue: contactData.address, 
+        type: 'work' 
+      }] : [],
+      
+      urls: contactData.website ? [{ 
+        value: contactData.website, 
+        type: 'homepage' 
+      }] : [],
+      
+      biographies: contactData.notes ? [{ 
+        value: contactData.notes 
+      }] : []
     };
 
     // Remove empty arrays
@@ -41,7 +70,12 @@ export default async function handler(req, res) {
       }
     });
 
-    console.log('Contact data:', JSON.stringify(personData));
+    console.log('Prepared contact data:', JSON.stringify(personData));
+
+    // Google People API endpoint
+    const contactsApiUrl = 'https://people.googleapis.com/v1/people:createContact';
+
+    console.log('Calling Google People API...');
 
     // Call Google Contacts API
     const contactsResponse = await fetch(contactsApiUrl, {
@@ -57,7 +91,7 @@ export default async function handler(req, res) {
 
     if (!contactsResponse.ok) {
       const errorData = await contactsResponse.json();
-      console.error('Contacts API error:', errorData);
+      console.error('Contacts API error:', JSON.stringify(errorData));
       return res.status(contactsResponse.status).json({ 
         error: 'Failed to save contact to Google Contacts',
         details: errorData
@@ -77,7 +111,7 @@ export default async function handler(req, res) {
     console.error('Error saving contact:', error.message);
     return res.status(500).json({ 
       error: 'Failed to save contact',
-      details: error.message
+      details: error.message 
     });
   }
 }
