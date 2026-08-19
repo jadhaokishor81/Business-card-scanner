@@ -1,12 +1,9 @@
 {
-  "name": "business-card-scanner",
-  "version": "1.0.0",
-  "description": "Business Card Scanner with Google Cloud Vision API",
   "type": "module",
-  "scripts": {
-    "dev": "vercel dev"
-  },
   "engines": {
     "node": "24.x"
+  },
+  "dependencies": {
+    "tesseract.js": "^5.1.1"
   }
 }
