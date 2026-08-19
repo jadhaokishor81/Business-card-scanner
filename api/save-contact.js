@@ -1,5 +1,3 @@
-import crypto from 'crypto';
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -14,159 +12,107 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { contactData } = req.body;
+    const { contactData, accessToken } = req.body;
 
-    if (!contactData) {
-      return res.status(400).json({ error: 'Missing contact data' });
+    if (!contactData || !accessToken) {
+      return res.status(400).json({ error: 'Missing contact data or access token' });
     }
 
     console.log('Saving contact:', contactData.fullName);
+    console.log('Using OAuth token from user');
 
-    const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-    
-    if (!serviceAccountKey) {
-      return res.status(500).json({ 
-        error: 'Service account credentials not configured. Add GOOGLE_SERVICE_ACCOUNT_KEY to Vercel environment variables.'
-      });
-    }
-
-    let credentials;
-    try {
-      credentials = JSON.parse(serviceAccountKey);
-    } catch (e) {
-      return res.status(500).json({ 
-        error: 'Invalid service account JSON format'
-      });
-    }
-
-    // Generate JWT for service account
-    const accessToken = await getServiceAccountToken(credentials);
-
-    // Parse name
+    // Parse name into given and family names
     const nameParts = contactData.fullName ? contactData.fullName.trim().split(/\s+/) : [];
-    const givenName = nameParts[0] || '';
-    const familyName = nameParts.slice(1).join(' ') || '';
+    const givenName = nameParts.length > 0 ? nameParts[0] : '';
+    const familyName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-    // Build contact object
-    const contact = {};
-
-    if (givenName || familyName) {
-      contact.names = [{
-        givenName,
-        familyName,
+    // Build contact object with correct Google People API schema
+    const personData = {
+      names: contactData.fullName ? [{ 
+        givenName: givenName,
+        familyName: familyName,
         displayName: contactData.fullName
-      }];
-    }
-
-    if (contactData.email) {
-      contact.emailAddresses = [{
-        value: contactData.email,
-        type: 'work'
-      }];
-    }
-
-    if (contactData.phone) {
-      contact.phoneNumbers = [{
-        value: contactData.phone,
-        type: 'work'
-      }];
-    }
-
-    if (contactData.company || contactData.jobTitle) {
-      contact.organizations = [{
+      }] : [],
+      
+      emailAddresses: contactData.email ? [{ 
+        value: contactData.email, 
+        type: 'work' 
+      }] : [],
+      
+      phoneNumbers: contactData.phone ? [{ 
+        value: contactData.phone, 
+        type: 'work' 
+      }] : [],
+      
+      organizations: contactData.company || contactData.jobTitle ? [{ 
         name: contactData.company || '',
         title: contactData.jobTitle || ''
-      }];
-    }
+      }] : [],
+      
+      addresses: contactData.address ? [{ 
+        formattedValue: contactData.address, 
+        type: 'work' 
+      }] : [],
+      
+      urls: contactData.website ? [{ 
+        value: contactData.website, 
+        type: 'homepage' 
+      }] : [],
+      
+      biographies: contactData.notes ? [{ 
+        value: contactData.notes 
+      }] : []
+    };
 
-    if (contactData.address) {
-      contact.addresses = [{
-        formattedValue: contactData.address,
-        type: 'work'
-      }];
-    }
+    // Remove empty arrays
+    Object.keys(personData).forEach(key => {
+      if (Array.isArray(personData[key]) && personData[key].length === 0) {
+        delete personData[key];
+      }
+    });
 
-    if (contactData.website) {
-      contact.urls = [{
-        value: contactData.website,
-        type: 'homepage'
-      }];
-    }
+    console.log('Contact payload:', JSON.stringify(personData));
 
-    if (contactData.notes) {
-      contact.biographies = [{
-        value: contactData.notes
-      }];
-    }
+    // Google People API endpoint
+    const contactsApiUrl = 'https://people.googleapis.com/v1/people:createContact';
 
-    console.log('Creating contact with:', JSON.stringify(contact));
+    console.log('Calling Google People API with user OAuth token...');
 
-    // Call People API
-    const response = await fetch('https://people.googleapis.com/v1/people:createContact', {
+    // Call Google Contacts API using USER's OAuth token
+    const contactsResponse = await fetch(contactsApiUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify(contact)
+      body: JSON.stringify(personData)
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      console.error('People API error:', error);
-      return res.status(response.status).json({
-        error: 'Failed to save contact',
-        details: error
+    console.log('People API response status:', contactsResponse.status);
+
+    if (!contactsResponse.ok) {
+      const errorData = await contactsResponse.json();
+      console.error('People API error:', JSON.stringify(errorData));
+      return res.status(contactsResponse.status).json({ 
+        error: 'Failed to save contact to Google Contacts',
+        details: errorData
       });
     }
 
-    const result = await response.json();
-    console.log('✅ Contact saved:', result.resourceName);
+    const savedContact = await contactsResponse.json();
+    console.log('✅ Contact saved successfully:', savedContact.resourceName);
 
     return res.status(200).json({
       success: true,
-      message: 'Contact saved successfully',
-      resourceName: result.resourceName
+      message: 'Contact saved to Google Contacts',
+      resourceName: savedContact.resourceName
     });
 
   } catch (error) {
-    console.error('Error:', error.message);
-    return res.status(500).json({
+    console.error('Error saving contact:', error.message);
+    return res.status(500).json({ 
       error: 'Failed to save contact',
-      details: error.message
+      details: error.message 
     });
   }
-}
-
-async function getServiceAccountToken(credentials) {
-  const header = Buffer.from(JSON.stringify({
-    alg: 'RS256',
-    typ: 'JWT'
-  })).toString('base64').replace(/[+/=]/g, c => ({ '+': '-', '/': '_', '=': '' }[c]));
-
-  const now = Math.floor(Date.now() / 1000);
-  const payload = Buffer.from(JSON.stringify({
-    iss: credentials.client_email,
-    scope: 'https://www.googleapis.com/auth/contacts',
-    aud: 'https://oauth2.googleapis.com/token',
-    exp: now + 3600,
-    iat: now
-  })).toString('base64').replace(/[+/=]/g, c => ({ '+': '-', '/': '_', '=': '' }[c]));
-
-  const signature = crypto
-    .createSign('RSA-SHA256')
-    .update(`${header}.${payload}`)
-    .sign(credentials.private_key, 'base64')
-    .replace(/[+/=]/g, c => ({ '+': '-', '/': '_', '=': '' }[c]));
-
-  const jwt = `${header}.${payload}.${signature}`;
-
-  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-  });
-
-  const tokenData = await tokenResponse.json();
-  return tokenData.access_token;
 }
