@@ -100,6 +100,36 @@
             font-weight: 600;
         }
 
+        .session-warning {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: #92400e;
+            display: none;
+        }
+
+        .session-warning.show {
+            display: block;
+        }
+
+        .session-info {
+            background: #e0e7ff;
+            border-left: 4px solid #4285f4;
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            font-size: 12px;
+            color: #1e40af;
+            display: none;
+        }
+
+        .session-info.show {
+            display: block;
+        }
+
         #signInDiv {
             display: flex;
             justify-content: center;
@@ -388,6 +418,14 @@
         </div>
 
         <div class="content">
+            <!-- Session Warning -->
+            <div class="session-warning" id="sessionWarning">
+                ⚠️ Session expired. Please sign in again.
+            </div>
+
+            <!-- Session Info -->
+            <div class="session-info" id="sessionInfo"></div>
+
             <!-- Authentication Section -->
             <div class="section" id="authenticationSection">
                 <div class="auth-section">
@@ -396,12 +434,12 @@
                     </div>
                     <div id="signInDiv"></div>
                     <button class="btn-danger sign-out-btn" id="signOutBtn" onclick="signOut()" style="margin-top: 10px; width: 100%;">
-                        Sign Out
+                        🔒 Sign Out & Clear Session
                     </button>
                 </div>
 
                 <div class="info-box">
-                    ℹ️ First time? Click "Authorize Google Drive & Contacts" after signing in.
+                    ℹ️ First time? Click "Authorize Google Drive & Contacts" after signing in. Session lasts 24 hours.
                 </div>
                 
                 <button class="btn-primary" onclick="authorizeForSaving()" id="authBtn" style="width: 100%; margin-bottom: 16px; display: none;">
@@ -526,7 +564,8 @@
                     ✅ Contacts automatically saved to Google Contacts<br>
                     ✅ Images stored in "Business Card Scanner" folder in Drive<br>
                     ✅ Everything stays in your Google account<br>
-                    ✅ Only $0.006 per card with Google Vision API
+                    ✅ Only $0.006 per card with Google Vision API<br>
+                    🔒 Session expires after 24 hours for security
                 </p>
             </div>
         </div>
@@ -548,33 +587,89 @@
             'https://www.googleapis.com/auth/drive.file'
         ];
 
-        // Load saved auth state on page load
-        function loadSavedAuth() {
-            const savedAuth = localStorage.getItem('cardScannerAuth');
-            if (savedAuth) {
-                try {
-                    const auth = JSON.parse(savedAuth);
-                    googleUser = auth.user;
-                    accessToken = auth.accessToken;
-                    isAuthenticated = true;
-                    updateAuthStatus();
-                    console.log('Loaded saved authentication for:', googleUser.name);
-                    return true;
-                } catch (e) {
-                    console.error('Error loading saved auth:', e);
-                    localStorage.removeItem('cardScannerAuth');
-                    return false;
+        // Session management
+        const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+        function saveUserSession(user) {
+            const sessionData = {
+                user: user,
+                loginTime: Date.now(),
+                expiresAt: Date.now() + SESSION_DURATION
+            };
+            localStorage.setItem('cardScannerSession', JSON.stringify(sessionData));
+            console.log('✅ Session saved (expires in 24 hours)');
+        }
+
+        function loadUserSession() {
+            const saved = localStorage.getItem('cardScannerSession');
+            if (!saved) return null;
+
+            try {
+                const session = JSON.parse(saved);
+                
+                // Check if expired
+                if (Date.now() > session.expiresAt) {
+                    console.warn('⚠️ Session expired');
+                    localStorage.removeItem('cardScannerSession');
+                    showSessionWarning();
+                    return null;
                 }
+
+                // Show session info
+                const hoursLeft = Math.floor((session.expiresAt - Date.now()) / (60 * 60 * 1000));
+                showSessionInfo(`✅ Logged in as ${session.user.name} | Session expires in ${hoursLeft}h`);
+                
+                return session;
+            } catch (e) {
+                console.error('Error loading session:', e);
+                localStorage.removeItem('cardScannerSession');
+                return null;
             }
-            return false;
+        }
+
+        function isSessionValid() {
+            const saved = localStorage.getItem('cardScannerSession');
+            if (!saved) return false;
+
+            try {
+                const session = JSON.parse(saved);
+                return Date.now() <= session.expiresAt;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function showSessionWarning() {
+            document.getElementById('sessionWarning').classList.add('show');
+        }
+
+        function hideSessionWarning() {
+            document.getElementById('sessionWarning').classList.remove('show');
+        }
+
+        function showSessionInfo(message) {
+            const el = document.getElementById('sessionInfo');
+            el.textContent = message;
+            el.classList.add('show');
+        }
+
+        function hideSessionInfo() {
+            document.getElementById('sessionInfo').classList.remove('show');
         }
 
         function initGoogleSignIn() {
-            // Check if already authenticated
-            if (loadSavedAuth()) {
+            // Check if valid session exists
+            const savedSession = loadUserSession();
+            if (savedSession && isSessionValid()) {
+                googleUser = savedSession.user;
+                isAuthenticated = true;
+                updateAuthStatus();
+                hideSessionWarning();
+                showUI();
                 return;
             }
 
+            hideSessionWarning();
             google.accounts.id.initialize({
                 client_id: CLIENT_ID,
                 callback: handleCredentialResponse,
@@ -604,22 +699,16 @@
             googleUser = JSON.parse(jsonPayload);
             isAuthenticated = true;
 
-            // Save to localStorage
-            localStorage.setItem('cardScannerAuth', JSON.stringify({
-                user: googleUser,
-                accessToken: accessToken
-            }));
-
+            // Save user info ONLY (not token!)
+            saveUserSession(googleUser);
             updateAuthStatus();
+            hideSessionWarning();
             
             setTimeout(() => {
-                document.getElementById('signInDiv').style.display = 'none';
-                document.getElementById('signOutBtn').style.display = 'block';
-                document.getElementById('authBtn').style.display = 'block';
-                document.getElementById('authStatusText').style.display = 'block';
-                document.getElementById('uploadSection').style.display = 'block';
+                showUI();
             }, 500);
             
+            // Request fresh access token
             requestAccessToken();
         }
 
@@ -633,13 +722,15 @@
             }
         }
 
-        function signOut() {
-            google.accounts.id.disableAutoSelect();
-            localStorage.removeItem('cardScannerAuth');
-            isAuthenticated = false;
-            googleUser = null;
-            accessToken = null;
-            
+        function showUI() {
+            document.getElementById('signInDiv').style.display = 'none';
+            document.getElementById('signOutBtn').style.display = 'block';
+            document.getElementById('authBtn').style.display = 'block';
+            document.getElementById('authStatusText').style.display = 'block';
+            document.getElementById('uploadSection').style.display = 'block';
+        }
+
+        function hideUI() {
             document.getElementById('signInDiv').style.display = 'flex';
             document.getElementById('signOutBtn').style.display = 'none';
             document.getElementById('authBtn').style.display = 'none';
@@ -647,10 +738,22 @@
             document.getElementById('uploadSection').style.display = 'none';
             document.getElementById('extractSection').style.display = 'none';
             document.getElementById('formSection').style.display = 'none';
+        }
+
+        function signOut() {
+            google.accounts.id.disableAutoSelect();
+            localStorage.removeItem('cardScannerSession');
+            isAuthenticated = false;
+            googleUser = null;
+            accessToken = null;
+            
             document.getElementById('authStatus').textContent = '🔒 Sign in with your Google account';
             document.getElementById('authStatus').classList.remove('authenticated');
+            hideUI();
+            hideSessionInfo();
+            showSessionWarning();
             
-            console.log('Signed out');
+            console.log('Signed out & session cleared');
         }
 
         function requestAccessToken() {
@@ -675,15 +778,7 @@
         function handleTokenResponse(response) {
             if (response.access_token) {
                 accessToken = response.access_token;
-                console.log('Access token obtained');
-                
-                // Save to localStorage
-                if (googleUser) {
-                    localStorage.setItem('cardScannerAuth', JSON.stringify({
-                        user: googleUser,
-                        accessToken: accessToken
-                    }));
-                }
+                console.log('✅ Fresh access token obtained (NOT saved)');
                 
                 document.getElementById('authStatusText').textContent = '✅ Authorized! Ready to save.';
                 document.getElementById('authStatusText').style.color = '#10b981';
@@ -751,6 +846,12 @@
         function saveContact() {
             if (!isAuthenticated) {
                 showMessage('Please sign in first', 'error');
+                return;
+            }
+
+            if (!isSessionValid()) {
+                showMessage('Session expired. Please sign in again.', 'error');
+                signOut();
                 return;
             }
 
