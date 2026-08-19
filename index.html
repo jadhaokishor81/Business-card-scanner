@@ -413,7 +413,14 @@
                 </div>
 
                 <div class="info-box">
-                    ℹ️ First time? You'll authorize access to Google Drive and Contacts.
+                    ℹ️ First time? Click "Authorize Google Drive & Contacts" below.
+                </div>
+                
+                <button class="btn-primary" onclick="authorizeForSaving()" id="authBtn" style="width: 100%; margin-bottom: 16px;">
+                    🔐 Authorize Google Drive & Contacts
+                </button>
+                <div id="authStatus" style="text-align: center; font-size: 13px; color: #666; margin-bottom: 16px;">
+                    Status: Not authorized yet
                 </div>
             </div>
 
@@ -613,10 +620,24 @@
             tokenClient.requestAccessToken({ prompt: 'consent' });
         }
 
+        function authorizeForSaving() {
+            console.log('Requesting authorization...');
+            const tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES.join(' '),
+                callback: handleTokenResponse,
+            });
+            tokenClient.requestAccessToken({ prompt: 'consent' });
+        }
+
         function handleTokenResponse(response) {
             if (response.access_token) {
                 accessToken = response.access_token;
                 console.log('Access token obtained');
+                document.getElementById('authStatus').textContent = '✅ Authorized! Ready to save.';
+                document.getElementById('authStatus').style.color = '#10b981';
+                document.getElementById('authBtn').textContent = '✅ Authorized';
+                document.getElementById('authBtn').disabled = true;
                 showMessage('✅ Connected to Google Drive & Contacts', 'success');
             }
         }
