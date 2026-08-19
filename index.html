@@ -314,38 +314,6 @@
             color: #1565c0;
         }
 
-        .scan-options {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-
-        .option-btn {
-            padding: 16px;
-            border: 1px solid #ddd;
-            background: white;
-            border-radius: 8px;
-            cursor: pointer;
-            text-align: center;
-            transition: all 0.3s ease;
-        }
-
-        .option-btn:hover {
-            border-color: #4285f4;
-            background: #f8f9ff;
-        }
-
-        .option-icon {
-            font-size: 32px;
-            margin-bottom: 8px;
-        }
-
-        .option-text {
-            font-size: 13px;
-            font-weight: 600;
-            color: #333;
-        }
-
         .checkbox-group {
             display: flex;
             gap: 16px;
@@ -404,7 +372,7 @@
 
         <div class="content">
             <!-- Authentication Section -->
-            <div class="section">
+            <div class="section" id="authenticationSection">
                 <div class="auth-section">
                     <div class="auth-status" id="authStatus">
                         🔒 Sign in with your Google account
@@ -413,13 +381,13 @@
                 </div>
 
                 <div class="info-box">
-                    ℹ️ First time? Click "Authorize Google Drive & Contacts" below.
+                    ℹ️ First time? Click "Authorize Google Drive & Contacts" after signing in.
                 </div>
                 
-                <button class="btn-primary" onclick="authorizeForSaving()" id="authBtn" style="width: 100%; margin-bottom: 16px;">
+                <button class="btn-primary" onclick="authorizeForSaving()" id="authBtn" style="width: 100%; margin-bottom: 16px; display: none;">
                     🔐 Authorize Google Drive & Contacts
                 </button>
-                <div id="authStatus" style="text-align: center; font-size: 13px; color: #666; margin-bottom: 16px;">
+                <div id="authStatusText" style="text-align: center; font-size: 13px; color: #666; margin-bottom: 16px; display: none;">
                     Status: Not authorized yet
                 </div>
             </div>
@@ -428,23 +396,15 @@
             <div class="success-message" id="successMessage"></div>
 
             <!-- Step 1: Capture/Upload -->
-            <div class="section">
+            <div class="section" id="uploadSection" style="display: none;">
                 <div class="section-title">
                     <span class="step-number">1</span>
                     Capture Business Card
                 </div>
-                <div class="scan-options">
-                    <div class="option-btn" onclick="captureCamera()">
-                        <div class="option-icon">📷</div>
-                        <div class="option-text">Take Photo</div>
-                    </div>
-                    <div class="option-btn" onclick="document.getElementById('fileInput').click()">
-                        <div class="option-icon">📁</div>
-                        <div class="option-text">Upload Image</div>
-                    </div>
-                </div>
+                <button class="btn-primary" onclick="document.getElementById('fileInput').click()" style="width: 100%; margin-bottom: 10px;">
+                    📁 Upload Image
+                </button>
                 <input type="file" id="fileInput" accept="image/*" onchange="handleFileUpload(event)">
-                <video id="camera" style="width:100%; margin-top:20px; border-radius:8px; display:none;"></video>
                 <div id="imagePreview" class="image-preview" style="display:none;">
                     <img id="previewImg" alt="Business card preview">
                 </div>
@@ -540,8 +500,8 @@
                 </div>
                 <p style="font-size: 13px; color: #666; line-height: 1.6;">
                     <strong>1. Sign in</strong> with your Google account<br>
-                    <strong>2. Take or upload</strong> a business card photo<br>
-                    <strong>3. Google Cloud Vision</strong> reads the text with high accuracy<br>
+                    <strong>2. Click authorize</strong> for Google Drive & Contacts access<br>
+                    <strong>3. Upload</strong> a business card photo<br>
                     <strong>4. Review & save</strong> to Contacts & Drive<br><br>
                     ✅ Contacts automatically saved to Google Contacts<br>
                     ✅ Images stored in "Business Card Scanner" folder in Drive<br>
@@ -555,7 +515,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js"></script>
     <script>
         let currentImage = null;
-        let cameraStream = null;
         let isAuthenticated = false;
         let googleUser = null;
         let accessToken = null;
@@ -569,7 +528,6 @@
             'https://www.googleapis.com/auth/drive.file'
         ];
 
-        // Initialize Google Sign-In with OAuth
         function initGoogleSignIn() {
             google.accounts.id.initialize({
                 client_id: CLIENT_ID,
@@ -585,16 +543,10 @@
                     text: 'signin_with'
                 }
             );
-
-            // Also initialize OAuth for access token
-            google.accounts.oauth2.initTokenClient({
-                client_id: CLIENT_ID,
-                scope: SCOPES.join(' '),
-                callback: handleTokenResponse,
-            });
         }
 
         function handleCredentialResponse(response) {
+            console.log('Sign-in successful');
             const base64Url = response.credential.split('.')[1];
             const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
             const jsonPayload = decodeURIComponent(
@@ -607,8 +559,25 @@
             isAuthenticated = true;
             updateAuthStatus();
             
+            // Show authorize button and hide sign-in
+            setTimeout(() => {
+                document.getElementById('signInDiv').style.display = 'none';
+                document.getElementById('authBtn').style.display = 'block';
+                document.getElementById('authStatusText').style.display = 'block';
+                document.getElementById('uploadSection').style.display = 'block';
+            }, 500);
+            
             // Request access token for Contacts and Drive
             requestAccessToken();
+        }
+
+        function updateAuthStatus() {
+            const statusEl = document.getElementById('authStatus');
+            if (isAuthenticated && googleUser) {
+                statusEl.textContent = '✅ Signed in as ' + googleUser.name;
+                statusEl.classList.add('authenticated');
+                console.log('Auth status updated for:', googleUser.name);
+            }
         }
 
         function requestAccessToken() {
@@ -634,34 +603,12 @@
             if (response.access_token) {
                 accessToken = response.access_token;
                 console.log('Access token obtained');
-                document.getElementById('authStatus').textContent = '✅ Authorized! Ready to save.';
-                document.getElementById('authStatus').style.color = '#10b981';
+                document.getElementById('authStatusText').textContent = '✅ Authorized! Ready to save.';
+                document.getElementById('authStatusText').style.color = '#10b981';
                 document.getElementById('authBtn').textContent = '✅ Authorized';
                 document.getElementById('authBtn').disabled = true;
                 showMessage('✅ Connected to Google Drive & Contacts', 'success');
             }
-        }
-
-        function updateAuthStatus() {
-            const statusEl = document.getElementById('authStatus');
-            if (isAuthenticated && googleUser) {
-                statusEl.textContent = '✅ Signed in as ' + googleUser.name;
-                statusEl.classList.add('authenticated');
-            }
-        }
-
-        function captureCamera() {
-            const video = document.getElementById('camera');
-            video.style.display = 'block';
-
-            navigator.mediaDevices.getUserMedia({ video: true })
-                .then(stream => {
-                    cameraStream = stream;
-                    video.srcObject = stream;
-                })
-                .catch(err => {
-                    showMessage('Camera access denied: ' + err.message, 'error');
-                });
         }
 
         function handleFileUpload(event) {
@@ -682,11 +629,6 @@
             const img = document.getElementById('previewImg');
             img.src = currentImage;
             preview.style.display = 'block';
-
-            if (cameraStream) {
-                cameraStream.getTracks().forEach(track => track.stop());
-                document.getElementById('camera').style.display = 'none';
-            }
         }
 
         function extractText() {
@@ -725,13 +667,19 @@
         }
 
         function saveContact() {
+            console.log('saveContact() called');
+            console.log('isAuthenticated:', isAuthenticated);
+            console.log('accessToken:', accessToken ? 'EXISTS' : 'NULL - PLEASE AUTHORIZE!');
+            
             if (!isAuthenticated) {
+                console.error('Not authenticated');
                 showMessage('Please sign in first', 'error');
                 return;
             }
 
             if (!accessToken) {
-                showMessage('Please authorize access to Google Contacts & Drive', 'error');
+                console.error('No access token - user must click Authorize button first!');
+                showMessage('❌ Please click "🔐 Authorize Google Drive & Contacts" button first!', 'error');
                 return;
             }
 
@@ -760,12 +708,16 @@
             const loadingEl = document.createElement('div');
             loadingEl.className = 'loading';
             loadingEl.innerHTML = '<div class="spinner"></div><span>Saving contact...</span>';
-            document.querySelector('.section:has(#formSection)').appendChild(loadingEl);
+            document.getElementById('formSection').parentElement.appendChild(loadingEl);
 
             let promises = [];
 
-            // Save to Google Contacts
+            console.log('Starting save process...');
+            console.log('saveToContacts:', saveToContacts);
+            console.log('saveToDrive:', saveToDrive);
+
             if (saveToContacts) {
+                console.log('Calling /api/save-contact...');
                 promises.push(
                     axios.post(`${BACKEND_URL}/api/save-contact`, {
                         contactData: contactData,
@@ -774,8 +726,8 @@
                 );
             }
 
-            // Upload image to Google Drive
             if (saveToDrive && currentImage) {
+                console.log('Calling /api/upload-image...');
                 promises.push(
                     axios.post(`${BACKEND_URL}/api/upload-image`, {
                         imageData: currentImage,
@@ -785,18 +737,28 @@
                     })
                 );
             }
+            
+            if (promises.length === 0) {
+                console.error('No APIs to call - both checkboxes unchecked?');
+                loadingEl.remove();
+                showMessage('Please check at least one option', 'error');
+                return;
+            }
 
             Promise.all(promises)
                 .then(responses => {
                     loadingEl.remove();
+                    console.log('✅ All APIs succeeded!', responses);
                     showMessage('✅ Contact saved successfully!', 'success');
-                    console.log('Save results:', responses);
                     resetForm();
                 })
                 .catch(error => {
                     loadingEl.remove();
-                    showMessage('Error: ' + (error.response?.data?.error || error.message), 'error');
-                    console.error('Save error:', error);
+                    console.error('❌ API Error Details:');
+                    console.error('Error message:', error.message);
+                    console.error('Response status:', error.response?.status);
+                    console.error('Response data:', error.response?.data);
+                    showMessage('❌ Error: ' + (error.response?.data?.error || error.message), 'error');
                 });
         }
 
@@ -822,7 +784,6 @@
             setTimeout(() => msgEl.classList.remove('show'), 4000);
         }
 
-        // Initialize on page load
         window.addEventListener('load', initGoogleSignIn);
     </script>
 </body>
