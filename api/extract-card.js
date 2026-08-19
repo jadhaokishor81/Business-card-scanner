@@ -1,4 +1,4 @@
-// Intelligent business card parser
+// Intelligent business card parser with improved name detection
 function parseBusinessCardIntelligently(lines, fullText) {
   const card = {
     fullName: '',
@@ -29,7 +29,15 @@ function parseBusinessCardIntelligently(lines, fullText) {
   }
 
   const urlMatches = fullText.match(urlRegex);
-  if (urlMatches) card.website = urlMatches[0];
+  if (urlMatches) {
+    // Filter out mccsemi.com pattern more carefully
+    for (let url of urlMatches) {
+      if (!url.includes('example.com') && !url.includes('placeholder')) {
+        card.website = url;
+        break;
+      }
+    }
+  }
 
   const titleKeywords = [
     'director', 'manager', 'engineer', 'specialist', 'executive', 'president',
@@ -44,7 +52,7 @@ function parseBusinessCardIntelligently(lines, fullText) {
     'inc', 'ltd', 'corp', 'llc', 'pvt', 'gmbh', 'ag', 'co.', 'company',
     'group', 'solutions', 'services', 'systems', 'technologies', 'enterprises',
     'international', 'global', 'consultants', 'associates', 'partners',
-    'corporation', 'industries'
+    'corporation', 'industries', 'micro', 'components'
   ];
 
   let nameFound = false;
@@ -52,6 +60,7 @@ function parseBusinessCardIntelligently(lines, fullText) {
   let companyFound = false;
   const addressLines = [];
 
+  // First pass: identify key data types
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lowerLine = line.toLowerCase();
@@ -60,64 +69,99 @@ function parseBusinessCardIntelligently(lines, fullText) {
     if (charCount < 2) continue;
     if (line.includes('@') || lowerLine.match(/^\+?\d/)) continue;
 
-    if (!nameFound && i < 3 && charCount < 60 && charCount > 3) {
-      let hasTitle = titleKeywords.some(kw => lowerLine.includes(kw));
-      let hasCompany = companyKeywords.some(kw => lowerLine.includes(kw));
-      if (!hasTitle && !hasCompany) {
-        card.fullName = line;
-        nameFound = true;
-        continue;
-      }
-    }
-
+    // TITLE EXTRACTION - do this first to mark title lines
     if (!titleFound && titleKeywords.some(kw => lowerLine.includes(kw))) {
       card.jobTitle = line;
       titleFound = true;
       continue;
     }
 
+    // COMPANY EXTRACTION
     if (!companyFound && companyKeywords.some(kw => lowerLine.includes(kw))) {
-      card.company = line;
-      companyFound = true;
-      continue;
+      // But skip very short lines or lines with just symbols
+      if (charCount > 3 && !line.match(/^[•\-*]+[A-Z.]+[•\-*]*$/)) {
+        card.company = line;
+        companyFound = true;
+        continue;
+      }
     }
 
+    // ADDRESS EXTRACTION
     if (addressKeywords.test(line) || /^\d+/.test(line)) {
       addressLines.push(line);
       continue;
     }
-
-    if (!nameFound && i === 0 && charCount < 60 && charCount > 3) {
-      if (!line.includes('@') && !lowerLine.match(/^\+?\d/) && 
-          !titleKeywords.some(kw => lowerLine.includes(kw))) {
-        card.fullName = line;
-        nameFound = true;
-      }
-    }
   }
 
-  if (addressLines.length > 0) {
-    card.address = addressLines.join(', ').substring(0, 200);
-  }
+  // Second pass: find name (prioritize lines that aren't title/company/address)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lowerLine = line.toLowerCase();
+    const charCount = line.length;
 
-  if (!card.fullName && lines.length > 0) {
-    for (let line of lines) {
-      if (line.length > 2 && line.length < 60 && !line.includes('@')) {
-        const lowerLine = line.toLowerCase();
-        const hasKeyword = titleKeywords.some(kw => lowerLine.includes(kw)) ||
-                          companyKeywords.some(kw => lowerLine.includes(kw));
-        if (!hasKeyword) {
+    if (charCount < 2) continue;
+    if (line.includes('@') || lowerLine.match(/^\+?\d/)) continue;
+    
+    // Skip if it's already identified as title, company, or address
+    if (line === card.jobTitle || line === card.company) continue;
+    if (addressLines.includes(line)) continue;
+
+    // Skip lines that are just symbols/dots (logos)
+    if (line.match(/^[•\-*•.]+$/) || line.match(/^[•\-*]+[A-Z.]+[•\-*]*$/)) continue;
+
+    // NAME: Look for short lines (2-4 words) that appear early in the card
+    if (!nameFound && i < 4 && charCount >= 3 && charCount <= 50) {
+      let hasTitle = titleKeywords.some(kw => lowerLine.includes(kw));
+      let hasCompany = companyKeywords.some(kw => lowerLine.includes(kw));
+      
+      if (!hasTitle && !hasCompany) {
+        // Check if it looks like a name (has letters, not too many numbers)
+        let letterCount = (line.match(/[a-zA-Z]/g) || []).length;
+        let digitCount = (line.match(/\d/g) || []).length;
+        
+        if (letterCount > digitCount && !line.includes('•')) {
           card.fullName = line;
-          break;
+          nameFound = true;
+          continue;
         }
       }
     }
   }
 
+  // Combine address lines
+  if (addressLines.length > 0) {
+    card.address = addressLines.join(', ').substring(0, 200);
+  }
+
+  // FALLBACK: If name still not found
+  if (!card.fullName && lines.length > 0) {
+    for (let line of lines) {
+      const lowerLine = line.toLowerCase();
+      const charCount = line.length;
+      
+      if (charCount > 2 && charCount < 50 && !line.includes('@') && !line.includes('•')) {
+        let hasKeyword = titleKeywords.some(kw => lowerLine.includes(kw)) ||
+                        companyKeywords.some(kw => lowerLine.includes(kw));
+        
+        if (!hasKeyword && line !== card.jobTitle && line !== card.company) {
+          // Prefer lines with actual letters
+          let letterCount = (line.match(/[a-zA-Z]/g) || []).length;
+          let digitCount = (line.match(/\d/g) || []).length;
+          
+          if (letterCount > digitCount) {
+            card.fullName = line;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // FALLBACK COMPANY: If company still not found
   if (!card.company && lines.length > 1) {
     for (let line of lines) {
       if (line !== card.fullName && line !== card.jobTitle && 
-          line.length > 10 && line.length < 80 && !line.includes('@')) {
+          line.length > 10 && line.length < 80 && !line.includes('@') && !line.includes('•')) {
         card.company = line;
         break;
       }
@@ -128,6 +172,7 @@ function parseBusinessCardIntelligently(lines, fullText) {
   card.jobTitle = card.jobTitle.trim();
   card.company = card.company.trim();
   card.address = card.address.trim();
+  card.website = card.website.trim();
 
   return card;
 }
@@ -146,7 +191,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log('Received request');
+    console.log('Received extract-card request');
     const { imageData } = req.body;
 
     if (!imageData) {
@@ -154,18 +199,16 @@ export default async function handler(req, res) {
     }
 
     const apiKey = process.env.GOOGLE_CLOUD_API_KEY;
-    console.log('API Key available:', !!apiKey);
     
     if (!apiKey) {
-      return res.status(500).json({ error: 'API key not configured', env: Object.keys(process.env) });
+      console.error('Missing API key');
+      return res.status(500).json({ error: 'API key not configured' });
     }
 
     let base64Image = imageData;
     if (imageData.includes(',')) {
       base64Image = imageData.split(',')[1];
     }
-
-    console.log('Image size:', base64Image.length);
 
     const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
 
@@ -192,8 +235,6 @@ export default async function handler(req, res) {
       })
     });
 
-    console.log('Vision API response status:', visionResponse.status);
-
     if (!visionResponse.ok) {
       const errorText = await visionResponse.text();
       console.error('Vision API error:', errorText);
@@ -201,7 +242,6 @@ export default async function handler(req, res) {
     }
 
     const data = await visionResponse.json();
-    console.log('Vision API data received');
 
     const responses = data.responses;
     if (!responses || responses.length === 0) {
@@ -216,11 +256,11 @@ export default async function handler(req, res) {
     const fullText = textAnnotations[0].description;
     const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    console.log('Parsing card...');
+    console.log('Parsing card with improved logic...');
     
     const cardInfo = parseBusinessCardIntelligently(lines, fullText);
 
-    console.log('Success!');
+    console.log('Success! Name:', cardInfo.fullName);
 
     return res.status(200).json({
       success: true,
@@ -230,10 +270,8 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('Error:', error.message);
-    console.error('Stack:', error.stack);
     return res.status(500).json({ 
-      error: error.message,
-      stack: error.stack
+      error: error.message
     });
   }
 }
